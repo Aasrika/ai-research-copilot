@@ -7,9 +7,10 @@ Phase 1 Final Piece: Take retrieved chunks → generate a cited answer.
 from groq import Groq
 import os
 from dotenv import load_dotenv
-
+from backend.core.config import TOP_K, TEMPERATURE
 from langchain_core.documents import Document
-from document_processor import retrieve_chunks, load_vector_index, get_embedding_model
+from backend.core.document_processor import load_index
+from backend.core.retriever import retrieve, format_context
 
 load_dotenv()
 
@@ -47,13 +48,40 @@ ANSWER (with citations):"""
 # MAIN RAG FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def answer_question(query: str, vector_store, k: int = 5) -> dict:
+def answer_question(query: str, vector_store, k: int = 5, paper_filter=None) -> dict:
     
     # Step 1: Retrieve chunks
-    chunks = retrieve_chunks(query, vector_store, k=k)
+    chunks = retrieve(query, vector_store, k=k, paper_filter=paper_filter)
 
-    # Step 2: Build prompt
-    prompt = build_prompt(query, chunks)
+    # ✅ Handle empty retrieval (VERY IMPORTANT)
+    if not chunks:
+        return {
+            "query": query,
+            "answer": "No relevant information found in the indexed papers.",
+            "sources": [],
+            "chunks_used": [],
+            "num_chunks": 0
+        }
+
+    # Step 2: Format context
+    context = format_context(chunks)
+
+    # ✅ Stronger prompt (reduces hallucination)
+    prompt = f"""You are a scientific research assistant.
+
+STRICT RULES:
+- Use ONLY the provided context
+- Do NOT use prior knowledge
+- Do NOT hallucinate
+- Every claim MUST have a citation [Source N]
+- If information is missing, say "Not enough information"
+
+CONTEXT:
+{context}
+
+QUESTION: {query}
+
+ANSWER:"""
 
     # Step 3: Call Groq LLM
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -63,18 +91,29 @@ def answer_question(query: str, vector_store, k: int = 5) -> dict:
         messages=[
             {"role": "user", "content": prompt}
         ],
-        temperature=0
+        temperature=TEMPERATURE
     )
 
     answer_text = response.choices[0].message.content
 
-    # Step 4: Extract sources
-    sources = [
-        {"file": chunk.metadata["source"], "page": chunk.metadata["page"]}
-        for chunk in chunks
-    ]
+    # ✅ Step 4: Safe metadata extraction (prevents crashes)
+    sources = []
+    for chunk in chunks:
+        m = chunk.metadata
 
-    # Deduplicate
+        file    = m.get("source", "unknown")
+        page    = m.get("page", "?")
+        paper   = m.get("paper_title", "unknown")
+        section = m.get("section", "unknown")
+
+        sources.append({
+            "file": file,
+            "paper": paper,
+            "page": page,
+            "section": section
+        })
+
+    # ✅ Deduplicate sources
     seen = set()
     unique_sources = []
     for s in sources:
@@ -90,7 +129,6 @@ def answer_question(query: str, vector_store, k: int = 5) -> dict:
         "chunks_used": chunks,
         "num_chunks": len(chunks)
     }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DISPLAY
@@ -116,8 +154,7 @@ if __name__ == "__main__":
     print("Loading index from disk...")
 
     # IMPORTANT: use_openai=False (you used local embeddings earlier)
-    embeddings = get_embedding_model(use_openai=False)
-    store = load_vector_index(embeddings)
+    store = load_index()
 
     print("✅ Index loaded. Ask questions about your paper(s).")
     print("Type 'quit' to exit.\n")
