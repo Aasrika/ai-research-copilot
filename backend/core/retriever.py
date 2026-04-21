@@ -1,6 +1,6 @@
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from backend.core.config import TOP_K, MMR_LAMBDA, SECTION_KEYWORDS
+from core.config import TOP_K, MMR_LAMBDA, SECTION_KEYWORDS
 
 
 # ─────────────────────────────────────────────────────────────────────────────

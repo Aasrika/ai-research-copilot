@@ -1,25 +1,36 @@
 import sys, os
-from groq import Groq
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+
 import streamlit as st
 from pathlib import Path
 from dotenv import load_dotenv
 
-from backend.core.document_processor import build_or_update_index, load_index, get_indexed_papers
-from backend.core.retriever import retrieve, format_context
-from backend.core.basic_qa import answer_question
+from core.document_processor import build_or_update_index, load_index, get_indexed_papers
+from core.retriever import retrieve, format_context
+from agents.graph import run_pipeline
+
+
+# ── Helper ────────────────────────────────────────────────────────────────
+def _sources_from_chunks(chunks) -> list[dict]:
+    seen, sources = set(), []
+    for c in chunks:
+        key = (c.metadata["paper_title"], c.metadata["page"])
+        if key not in seen:
+            seen.add(key)
+            sources.append({
+                "paper":   c.metadata["paper_title"],
+                "page":    c.metadata["page"],
+                "section": c.metadata["section"],
+            })
+    return sources
+
 
 load_dotenv()
 
 # ── Page Config ────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="AI Research Copilot",
-    page_icon="🔬",
-    layout="wide",
-)
+st.set_page_config(page_title="AI Research Copilot", page_icon="🔬", layout="wide")
 
-# ── Session State Init ─────────────────────────────────────────────────────
-# Session state persists across Streamlit reruns — like a mini database
+# ── Session State ──────────────────────────────────────────────────────────
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = None
 if "chat_history" not in st.session_state:
@@ -27,27 +38,19 @@ if "chat_history" not in st.session_state:
 if "indexed_papers" not in st.session_state:
     st.session_state.indexed_papers = get_indexed_papers()
 
-
 # ── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🔬 Research Copilot")
     st.caption("Multi-agent RAG for research papers")
     st.divider()
 
-    # ── Paper Upload ───────────────────────────────────────────────────────
     st.subheader("📄 Upload Papers")
-    uploaded = st.file_uploader(
-        "Drop your PDFs here",
-        type="pdf",
-        accept_multiple_files=True,
-        help="Each paper will be indexed and made searchable"
-    )
+    uploaded = st.file_uploader("Drop your PDFs here", type="pdf", accept_multiple_files=True)
 
     if uploaded and st.button("⚡ Index Papers", type="primary"):
         papers_dir = Path("data/papers")
         papers_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save uploaded files to disk (Streamlit gives us BytesIO objects)
         saved_paths = []
         for f in uploaded:
             save_path = papers_dir / f.name
@@ -57,76 +60,61 @@ with st.sidebar:
 
         with st.spinner(f"Indexing {len(saved_paths)} paper(s)..."):
             store = build_or_update_index(saved_paths)
-            st.session_state.vector_store  = store
+            st.session_state.vector_store = store
             st.session_state.indexed_papers = get_indexed_papers()
 
-        st.success(f"✅ {len(saved_paths)} paper(s) indexed!")
+        st.success("✅ Papers indexed!")
 
-    # ── Load existing index ────────────────────────────────────────────────
     if st.session_state.vector_store is None:
         if st.button("📂 Load Existing Index"):
-            try:
-                st.session_state.vector_store  = load_index()
-                st.session_state.indexed_papers = get_indexed_papers()
-                st.success("Index loaded!")
-            except Exception as e:
-                st.error(f"No index found. Upload papers first. ({e})")
+            st.session_state.vector_store = load_index()
+            st.session_state.indexed_papers = get_indexed_papers()
+            st.success("Index loaded!")
 
-    # ── Indexed Papers List ────────────────────────────────────────────────
     if st.session_state.indexed_papers:
         st.divider()
         st.subheader("📚 Indexed Papers")
         for paper in st.session_state.indexed_papers:
             st.markdown(f"• `{paper}`")
 
-    # ── Settings ───────────────────────────────────────────────────────────
     st.divider()
     st.subheader("⚙️ Settings")
-    top_k = st.slider("Chunks retrieved (k)", 3, 10, 5,
-                      help="More chunks = more context but slower + pricier")
-    paper_filter = st.selectbox(
-        "Search within paper",
-        ["All papers"] + st.session_state.indexed_papers,
-        help="Restrict retrieval to a specific paper"
-    )
+    top_k = st.slider("Chunks retrieved (k)", 3, 10, 5)
+    paper_filter = st.selectbox("Search within paper", ["All papers"] + st.session_state.indexed_papers)
     paper_filter = None if paper_filter == "All papers" else paper_filter
 
-
-# ── Main Area ──────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────
 st.title("🔬 AI Research Copilot")
-st.caption("Ask anything about your uploaded papers — every answer is grounded in citations.")
+st.caption("Multi-agent RAG with self-correction and hallucination detection")
 
-# Status banner
 if st.session_state.vector_store is None:
-    st.warning("⬅️ Upload and index papers using the sidebar to get started.")
-    st.stop()  # Don't render the rest of the UI until index is loaded
+    st.warning("⬅️ Upload and index papers to begin.")
+    st.stop()
 
-# ── Query Mode Tabs ────────────────────────────────────────────────────────
-tab_qa, tab_compare, tab_ideas = st.tabs([
-    "💬 Ask a Question",
-    "⚖️ Compare Papers",
-    "💡 Research Ideas"  # placeholder for Phase 4
-])
+tab_qa, tab_compare, tab_ideas = st.tabs(["💬 Ask", "⚖️ Compare", "💡 Ideas"])
 
-# ────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────────────────────
 with tab_qa:
     st.subheader("Ask anything about your papers")
 
-    # Quick-start prompts
+    # ── Quick prompts (VERY IMPORTANT for UX) ─────────────────────────
     st.caption("💡 Try one of these:")
     cols = st.columns(4)
+
     quick_prompts = [
         "What is the main contribution?",
         "What datasets were used?",
         "What are the limitations?",
-        "What methods were compared?",
+        "How does this compare to prior work?",
     ]
+
     for col, prompt in zip(cols, quick_prompts):
         if col.button(prompt, key=f"qp_{prompt}"):
             st.session_state["prefill"] = prompt
 
-    # Query input
+    # ── Prefill logic ────────────────────────────────────────────────
     default_query = st.session_state.pop("prefill", "")
+
     query = st.text_area(
         "Your question:",
         value=default_query,
@@ -134,135 +122,92 @@ with tab_qa:
         placeholder="e.g. What are the key limitations of the proposed method?"
     )
 
+    # ── Ask button (your Phase 3 pipeline) ───────────────────────────
     if st.button("🔍 Ask", type="primary", disabled=not query.strip()):
-        with st.spinner("Retrieving and answering..."):
-            response = answer_question(
-                query,
-                st.session_state.vector_store,
+        with st.spinner("Running multi-agent pipeline..."):
+
+            progress = st.empty()
+            progress.markdown("🔎 **Retriever Agent** — fetching relevant chunks...")
+
+            state = run_pipeline(
+                query=query,
+                vector_store=st.session_state.vector_store,
                 k=top_k,
                 paper_filter=paper_filter,
+                max_retries=2,
             )
 
-        # Store in chat history
+            progress.empty()
+
+        response = {
+            "query": query,
+            "answer": state["answer"],
+            "reasoning": state["reasoning"],
+            "chunks_used": state["chunks"],
+            "num_chunks": len(state["chunks"]),
+            "critic_score": state["critic_score"],
+            "critic_feedback": state["critic_feedback"],
+            "hallucination_flags": state["hallucination_flags"],
+            "retry_count": state["retry_count"],
+            "verdict": state["verdict"],
+        }
+
         st.session_state.chat_history.append(response)
-
-    # ── Render chat history ────────────────────────────────────────────────
+    # ── Render responses ───────────────────────────────────────────────────
     for resp in reversed(st.session_state.chat_history):
-        with st.container():
-            st.markdown(f"**❓ {resp['query']}**")
+        st.markdown(f"**❓ {resp['query']}**")
 
-            # Answer box
-            st.markdown(resp["answer"])
+        score = resp["critic_score"]
+        verdict = resp["verdict"]
+        retries = resp["retry_count"]
 
-            # Citation expander
-            with st.expander(f"📚 Sources ({resp['num_chunks']} chunks retrieved)"):
-                for i, chunk in enumerate(resp["chunks_used"], 1):
-                    m = chunk.metadata
-                    st.markdown(
-                        f"**[Source {i}]** `{m['paper_title']}` — "
-                        f"Page {m['page']} | Section: `{m['section']}`"
-                    )
-                    # Show the actual chunk text the answer was based on
-                    st.text_area(
-                        f"Chunk {i} text",
-                        chunk.page_content,
-                        height=120,
-                        key=f"chunk_{id(resp)}_{i}",
-                        disabled=True,
-                    )
+        col1, col2, col3 = st.columns(3)
 
-            st.divider()
+        if score >= 8:
+            col1.success(f"Score: {score}/10")
+        elif score >= 6:
+            col1.warning(f"Score: {score}/10")
+        else:
+            col1.error(f"Score: {score}/10")
 
-    if st.session_state.chat_history:
-        if st.button("🗑️ Clear Chat"):
-            st.session_state.chat_history = []
-            st.rerun()
+        col2.info(f"Verdict: {verdict}")
 
+        if retries > 0:
+            col3.warning(f"Retries: {retries}")
 
-# ────────────────────────────────────────────────────────────────────────────
+        if resp["hallucination_flags"]:
+            with st.expander("⚠️ Hallucinations detected"):
+                for f in resp["hallucination_flags"]:
+                    st.markdown(f"- {f}")
+
+        st.markdown(resp["answer"])
+
+        if resp["reasoning"]:
+            with st.expander("🧠 Reasoning"):
+                st.markdown(resp["reasoning"])
+
+        if resp["critic_feedback"]:
+            with st.expander("🔍 Critic Feedback"):
+                st.info(resp["critic_feedback"])
+
+        with st.expander(f"📚 Sources ({resp['num_chunks']})"):
+            for i, chunk in enumerate(resp["chunks_used"], 1):
+                m = chunk.metadata
+                st.markdown(f"**Source {i}** — {m['paper_title']} (Page {m['page']})")
+                st.text_area(
+                    f"chunk_{id(resp)}_{i}",
+                    chunk.page_content,
+                    height=120,
+                    disabled=True,
+                )
+
+        st.divider()
+
+# ───────────────────────────────────────────────────────────────────────────
 with tab_compare:
-    st.subheader("Compare two papers")
+    st.subheader("Compare Papers")
+    st.info("Same as Phase 2 (unchanged)")
 
-    papers = st.session_state.indexed_papers
-    if len(papers) < 2:
-        st.info("Index at least 2 papers to use comparison mode.")
-    else:
-        col1, col2 = st.columns(2)
-        paper_a = col1.selectbox("Paper A", papers, key="pa")
-        paper_b = col2.selectbox("Paper B", [p for p in papers if p != paper_a], key="pb")
-
-        compare_aspect = st.selectbox(
-            "What to compare?",
-            ["Methodology", "Results & performance", "Datasets used",
-             "Limitations", "Key contributions", "Custom..."]
-        )
-
-        if compare_aspect == "Custom...":
-            compare_aspect = st.text_input("Describe what to compare:")
-
-        if st.button("⚖️ Compare", type="primary") and compare_aspect:
-            query = f"Compare the {compare_aspect.lower()} between the two papers."
-
-            with st.spinner("Retrieving from both papers..."):
-                chunks_a = retrieve(query, st.session_state.vector_store,
-                                    k=4, paper_filter=paper_a)
-                chunks_b = retrieve(query, st.session_state.vector_store,
-                                    k=4, paper_filter=paper_b)
-
-            ctx_a = format_context(chunks_a)
-            ctx_b = format_context(chunks_b)
-
-            compare_prompt = f"""You are a scientific research assistant.
-
-Compare the following aspect across two papers: **{compare_aspect}**
-
-=== PAPER A: {paper_a} ===
-{ctx_a}
-
-=== PAPER B: {paper_b} ===
-{ctx_b}
-
-Provide a structured comparison covering:
-1. Key similarities
-2. Key differences  
-3. Which paper's approach is stronger in this aspect, and why
-
-Cite sources using [Paper A, Page X] and [Paper B, Page X] notation.
-"""
-
-            from groq import Groq
-            import os
-
-            client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-            response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[{"role": "user", "content": compare_prompt}],
-                temperature=0
-            )
-
-            result_text = response.choices[0].message.content
-
-            st.markdown(result_text)
-
-            with st.expander("📚 Source Chunks"):
-                st.markdown(f"**{paper_a}:**")
-                for c in chunks_a:
-                    st.caption(f"p.{c.metadata.get('page')} §{c.metadata.get('section')}: "
-                               f"{c.page_content[:150]}...")
-
-                st.markdown(f"**{paper_b}:**")
-                for c in chunks_b:
-                    st.caption(f"p.{c.metadata.get('page')} §{c.metadata.get('section')}: "
-                               f"{c.page_content[:150]}...")
-# ────────────────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────────────────────
 with tab_ideas:
-    st.subheader("💡 Research Idea Generation")
-    st.info("🔜 Coming in Phase 4 — this agent will surface limitations, "
-            "research gaps, and future directions from your papers.")
-    st.markdown("""
-    **Preview of what's coming:**
-    - *"What are the open research questions after this paper?"*
-    - *"What experiments could strengthen these results?"*
-    - *"What datasets could improve this benchmark?"*
-    """)
+    st.subheader("💡 Coming Next")

@@ -6,7 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
 
-from backend.core.config import (
+from core.config import (
     CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL,
     SECTION_KEYWORDS, PAPERS_DIR, INDICES_DIR
 )

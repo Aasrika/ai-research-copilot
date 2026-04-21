@@ -7,10 +7,10 @@ Phase 1 Final Piece: Take retrieved chunks → generate a cited answer.
 from groq import Groq
 import os
 from dotenv import load_dotenv
-from backend.core.config import TOP_K, TEMPERATURE
+from core.config import TOP_K, TEMPERATURE
 from langchain_core.documents import Document
-from backend.core.document_processor import load_index
-from backend.core.retriever import retrieve, format_context
+from core.document_processor import load_index
+from core.retriever import retrieve, format_context
 
 load_dotenv()
 
