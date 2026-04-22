@@ -1,38 +1,19 @@
 """
 critic_agent.py
 ---------------
-Node 3 in the LangGraph. This is what makes your project research-level.
+Node 3 in the LangGraph.
 
-THE CRITIC'S JOB:
-  Given the answer + the source chunks it was generated from,
-  verify that every factual claim in the answer is actually supported
-  by the sources.
-
-  Claims not found in sources = hallucinations.
-
-WHY THIS IS HARD (and why it matters):
-  LLMs have parametric knowledge (training data) + retrieved context.
-  Without a critic, the model happily blends both — citing a number
-  from training that the retrieved text never stated. In a research
-  context, this is dangerous. A misattributed accuracy metric or
-  a wrong dataset name could mislead your entire analysis.
-
-  This is literally what RAGFail (your own research!) is about.
-  You're building the solution to the problem you studied.
-
-CRITIC OUTPUT:
-  - critic_score (1–10):   overall answer quality
-  - hallucination_flags:   specific unverified claims
-  - critic_feedback:       actionable instructions for improvement
-  - refined_query:         a better query for re-retrieval (if needed)
-  - verdict:               PASS / RETRY / FAIL
+Strict fact-checker that verifies whether the generated answer
+is grounded in retrieved source chunks.
 """
 
-import json, re
-from langchain_groq import ChatGroq
+import json
+import re
+import os
+from groq import Groq
+from core.config import CRITIC_MODEL
 from agents.state import AgentState
 from core.retriever import format_context
-from core.config import CRITIC_MODEL
 
 
 CRITIC_PROMPT = """You are a strict scientific fact-checker auditing an AI-generated answer about a research paper.
@@ -54,20 +35,26 @@ AI'S REASONING:
 AI'S ANSWER:
 {answer}
 
-Respond ONLY with valid JSON in this exact schema:
+Respond ONLY with valid JSON.
+Do NOT include explanations, markdown, or text outside JSON.
+
+Schema:
 {{
   "score": <integer 1-10>,
   "verdict": "<PASS|RETRY|FAIL>",
-  "hallucination_flags": ["<claim 1 not in sources>", "<claim 2>"],
-  "strengths": ["<what the answer did well>"],
-  "issues": ["<specific problem 1>", "<specific problem 2>"],
-  "feedback": "<One paragraph of actionable feedback for improving the answer>",
-  "refined_query": "<A more specific version of the original question that would retrieve better chunks, or empty string if query was fine>"
+  "hallucination_flags": ["<claim not in sources>"],
+  "strengths": ["<what was good>"],
+  "issues": ["<problems>"],
+  "feedback": "<actionable improvement>",
+  "refined_query": "<better query or empty string>"
 }}
 """
 
 
 def critic_node(state: AgentState) -> dict:
+    """
+    LangGraph node: fact-check the generated answer.
+    """
 
     chunks = state["chunks"]
     answer = state["answer"]
@@ -83,10 +70,24 @@ def critic_node(state: AgentState) -> dict:
         answer=answer,
     )
 
-    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
-    response = llm.invoke(prompt)
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-    parsed = _parse_critic_response(response.content)
+    try:
+        response = client.chat.completions.create(
+        model=CRITIC_MODEL,
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0
+)
+
+        raw_output = response.choices[0].message.content
+
+    except Exception as e:
+        print(f"❌ Groq API error: {e}")
+        raw_output = ""
+
+    print("\n🧠 RAW CRITIC OUTPUT:\n", raw_output)
+
+    parsed = _parse_critic_response(raw_output)
 
     score = parsed.get("score", 5)
     verdict = parsed.get("verdict", "RETRY")
@@ -109,23 +110,45 @@ def critic_node(state: AgentState) -> dict:
 
 
 def _parse_critic_response(raw: str) -> dict:
+    """
+    Parse JSON output from LLM safely.
+    """
+
+    if not raw:
+        return _fallback()
+
     try:
+        # Remove markdown formatting
         cleaned = re.sub(r"```json|```", "", raw).strip()
+
+        # Extract JSON block if extra text exists
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(0)
+
         return json.loads(cleaned)
+
     except Exception:
         print("⚠️ Invalid JSON from critic — fallback triggered")
-        return {
-            "score": 5,
-            "verdict": "RETRY",
-            "hallucination_flags": [],
-            "feedback": "Parsing failed — retrying",
-            "refined_query": "",
-        }
+        return _fallback()
 
 
-# 🔀 Routing logic (VERY IMPORTANT)
+def _fallback() -> dict:
+    return {
+        "score": 5,
+        "verdict": "RETRY",
+        "hallucination_flags": [],
+        "feedback": "Parsing failed — retrying",
+        "refined_query": "",
+    }
+
+
+# 🔀 Routing logic
 
 def route_after_critic(state: AgentState) -> str:
+    """
+    Decide whether to accept answer or retry.
+    """
 
     verdict = state.get("verdict", "PASS")
     retry_count = state.get("retry_count", 0)

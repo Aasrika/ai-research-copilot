@@ -12,6 +12,34 @@ from agents.comparison_agent import run_comparison, ASPECT_QUERIES
 
 load_dotenv()
 
+st.markdown("""
+<style>
+.stButton>button {
+    border-radius: 10px;
+    background: linear-gradient(90deg, #7C3AED, #06B6D4);
+    color: white;
+    border: none;
+}
+
+.stTextInput>div>div>input {
+    border-radius: 10px;
+}
+
+.block-container {
+    padding-top: 2rem;
+}
+
+div[data-testid="stMetric"] {
+    background-color: #111827;
+    padding: 10px;
+    border-radius: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+
+
 # ── Page Config ────────────────────────────────────────────────────────────
 st.set_page_config(page_title="AI Research Copilot", page_icon="🔬", layout="wide")
 
@@ -118,7 +146,7 @@ with tab_qa:
         st.session_state.chat_history.append(state)
 
     for resp in reversed(st.session_state.chat_history):
-        st.markdown(f"**❓ {resp['query']}**")
+        st.markdown(f"**📌 {resp['query']}**")
 
         score = resp["critic_score"]
         if score >= 8:

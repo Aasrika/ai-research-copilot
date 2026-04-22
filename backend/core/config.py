@@ -22,9 +22,9 @@ EMBEDDING_MODEL   = "text-embedding-3-small"
 EMBEDDING_DIM     = 1536
 
 
-ANSWERING_MODEL   = "gpt-4o-mini"   
-CRITIC_MODEL      = "gpt-4o"        
-TEMPERATURE       = 0               
+ANSWERING_MODEL = "llama-3.1-8b-instant"
+CRITIC_MODEL = "llama-3.1-8b-instant"
+TEMPERATURE = 0            
 
 
 CHUNK_SIZE        = 800    

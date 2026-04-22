@@ -1,97 +1,95 @@
 """
-graph.py
---------
-Assembles the multi-agent LangGraph pipeline.
-
-LANGGRAPH CONCEPTS USED HERE:
-
-  StateGraph:      A graph whose nodes share a typed state dict.
-
-  add_node():      Register a function as a named node.
-                   The function signature must be: fn(state) -> partial_state
-
-  add_edge():      Unconditional: A always goes to B.
-
-  add_conditional_edges():
-                   After node A, call router_fn(state) → returns a string
-                   → that string maps to the next node name.
-                   This is how the critic's verdict routes to END or RETRY.
-
-  compile():       Freezes the graph into a runnable object.
-                   After compile, you call graph.invoke(initial_state).
-
-  functools.partial():
-                   Some nodes need access to vector_store which isn't in state.
-                   We use partial() to "bake in" the vector_store at graph
-                   creation time, so the node still has signature fn(state).
+graph.py (Phase 5 - FINAL)
+--------------------------
+Upgrades:
+  - Real per-stage timing using RunTimer
+  - Automatic logging to JSONL
+  - run_id returned for UI feedback
+  - Error-safe logging (logs failures too)
 """
 
 from functools import partial
+import time
+
 from langgraph.graph import StateGraph, END
 from langchain_community.vectorstores import FAISS
 
 from agents.state import AgentState
 from agents.retriever_agent import retriever_node
 from agents.answering_agent import answering_node
-from agents.critic_agent    import critic_node, route_after_critic
+from agents.critic_agent import critic_node, route_after_critic
+
+from evaluation.logger import RunRecord, RunTimer, log_run
 
 
-def build_graph(vector_store: FAISS) -> StateGraph:
-    """
-    Build and compile the multi-agent graph.
+# ─────────────────────────────────────────────────────────────────────────────
+# TIMING WRAPPER (KEY FIX)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    Graph structure:
-      START → retriever → answering → critic → (conditional) → END
-                              ↑                      |
-                              └──── retry loop ───────┘
-                                  (critic updates retry_count
-                                   and refined_query before looping)
-    """
+def timed_node(fn, name: str, timer: RunTimer):
+    """Wrap a node to measure execution time."""
+    def wrapper(state):
+        with timer.section(name):
+            return fn(state)
+    return wrapper
 
-    # ── 1. Create the graph with our state schema ──────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GRAPH BUILDER
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_graph(vector_store: FAISS, timer: RunTimer) -> StateGraph:
     graph = StateGraph(AgentState)
 
-    # ── 2. Register nodes ──────────────────────────────────────────────────
-    # retriever_node needs vector_store → bake it in with partial()
-    graph.add_node("retriever",  partial(retriever_node, vector_store=vector_store))
-    graph.add_node("answering",  answering_node)
-    graph.add_node("critic",     critic_node)
+    # Nodes with timing
+    graph.add_node(
+        "retriever",
+        timed_node(partial(retriever_node, vector_store=vector_store), "retrieval", timer)
+    )
 
-    # ── 3. Add the retry handler node ─────────────────────────────────────
-    # This node runs BEFORE looping back to retriever.
-    # Its only job: increment retry_count and update retrieval_query.
+    graph.add_node(
+        "answering",
+        timed_node(answering_node, "generation", timer)
+    )
+
+    graph.add_node(
+        "critic",
+        timed_node(critic_node, "critic", timer)
+    )
+
+    # Retry handler
     def retry_handler(state: AgentState) -> dict:
         return {
-            "retry_count":       state.get("retry_count", 0) + 1,
-            "retrieval_query":   state.get("refined_query") or state["query"],
-            # Clear previous answer so answering agent starts fresh
-            "answer":            "",
-            "reasoning":         "",
+            "retry_count":     state.get("retry_count", 0) + 1,
+            "retrieval_query": state.get("refined_query") or state["query"],
+            "answer":          "",
+            "reasoning":       "",
         }
 
     graph.add_node("retry_handler", retry_handler)
 
-    # ── 4. Add unconditional edges ─────────────────────────────────────────
-    graph.add_edge("retriever",    "answering")
-    graph.add_edge("answering",    "critic")
-    graph.add_edge("retry_handler","retriever")   # retry loops back to retriever
+    # Edges
+    graph.add_edge("retriever",     "answering")
+    graph.add_edge("answering",     "critic")
+    graph.add_edge("retry_handler", "retriever")
 
-    # ── 5. Add the conditional edge after critic ───────────────────────────
     graph.add_conditional_edges(
-        "critic",                  # source node
-        route_after_critic,        # router function: returns "end" or "retry"
+        "critic",
+        route_after_critic,
         {
-            "end":   END,             # LangGraph's built-in terminal node
-            "retry": "retry_handler", # loop back through retry_handler first
+            "end": END,
+            "retry": "retry_handler",
         }
     )
 
-    # ── 6. Set entry point ────────────────────────────────────────────────
     graph.set_entry_point("retriever")
 
-    # ── 7. Compile ────────────────────────────────────────────────────────
     return graph.compile()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE RUNNER
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(
     query:        str,
@@ -100,53 +98,90 @@ def run_pipeline(
     paper_filter: str  = None,
     max_retries:  int  = 2,
 ) -> AgentState:
-    """
-    Entry point for the full multi-agent pipeline.
-    Called by the Streamlit UI and FastAPI.
 
-    Returns the final AgentState with everything populated:
-      state["answer"]            → final verified answer
-      state["critic_score"]      → quality score 1–10
-      state["hallucination_flags"] → any unverified claims
-      state["retry_count"]       → how many retries were needed
-      state["chunks"]            → chunks the final answer is based on
-    """
-    compiled = build_graph(vector_store)
+    timer = RunTimer()
+    compiled = build_graph(vector_store, timer)
 
     initial_state: AgentState = {
-        # Input
         "query":           query,
         "paper_filter":    paper_filter,
         "k":               k,
-        # Retrieval
+
         "chunks":          [],
-        "retrieval_query": query,   # starts as original query
-        # Answering
+        "retrieval_query": query,
+
         "answer":          "",
         "reasoning":       "",
-        # Critic
+
         "critic_score":        0,
         "critic_feedback":     "",
         "hallucination_flags": [],
-        "refined_query":       "",
-        "verdict":             "",
-        # Loop control
+
+        "refined_query": "",
+        "verdict":       "",
+
         "retry_count":  0,
         "max_retries":  max_retries,
     }
 
     print(f"\n{'='*60}")
-    print(f"🚀 Multi-agent pipeline starting")
-    print(f"   Query: {query[:70]}...")
+    print(f"🚀 Pipeline | {query[:70]}...")
     print(f"{'='*60}")
 
-    final_state = compiled.invoke(initial_state)
+    error_msg = None
+
+    try:
+        final_state = compiled.invoke(initial_state)
+
+    except Exception as e:
+        # Capture failure for logging
+        final_state = initial_state
+        error_msg = str(e)
+
+    # ── Extract retrieval info ─────────────────────────────────────────────
+    chunks   = final_state.get("chunks", [])
+    sections = list({c.metadata.get("section", "body") for c in chunks})
+    papers   = list({c.metadata.get("paper_title", "") for c in chunks})
+
+    # ── Build log record ───────────────────────────────────────────────────
+    record = RunRecord(
+        pipeline_type        = "qa",
+        query                = query,
+        paper_filter         = paper_filter,
+        k                    = k,
+
+        critic_score         = final_state.get("critic_score", 0),
+        verdict              = final_state.get("verdict", ""),
+        hallucination_flags  = final_state.get("hallucination_flags", []),
+
+        retry_count          = final_state.get("retry_count", 0),
+        answer_length        = len(final_state.get("answer", "")),
+
+        latency_total        = timer.total(),
+        latency_retrieval    = timer["retrieval"],
+        latency_generation   = timer["generation"],
+        latency_critic       = timer["critic"],
+
+        num_chunks           = len(chunks),
+        sections_retrieved   = sections,
+        papers_retrieved     = papers,
+    )
+
+    # Add error if occurred
+    if error_msg:
+        record.verdict = "ERROR"
+        record.hallucination_flags.append("pipeline_failure")
+
+    log_run(record)
+
+    # Attach run_id for UI feedback
+    final_state["run_id"] = record.run_id
 
     print(f"\n{'='*60}")
-    print(f"✅ Pipeline complete")
-    print(f"   Score:   {final_state['critic_score']}/10")
-    print(f"   Retries: {final_state['retry_count']}")
-    print(f"   Flags:   {final_state['hallucination_flags'] or 'None'}")
+    print(f"✅ Done")
+    print(f"   Score:   {record.critic_score}/10")
+    print(f"   Retries: {record.retry_count}")
+    print(f"   Time:    {record.latency_total}s")
     print(f"{'='*60}\n")
 
     return final_state

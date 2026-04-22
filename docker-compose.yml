@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  copilot:
+    build: .
+    container_name: ai-research-copilot
+
+    ports:
+      - "8000:8000"
+      - "8501:8501"
+
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PYTHONPATH=/app   # ✅ THIS FIXES YOUR IMPORT ISSUE
+
+    volumes:
+      - ./data:/app/data
+      - ./evaluation:/app/evaluation
+
+    restart: unless-stopped
