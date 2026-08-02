@@ -36,7 +36,8 @@ class RunRecord:
     # Identity
     run_id:        str   = field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp:     str   = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    pipeline_type: str   = "qa"          # qa | comparison | ideas
+    pipeline_type: str   = "qa"          # qa | comparison | ideas | critique
+    session_id:    Optional[str] = None  # None for pre-session/legacy runs
 
     # Query
     query:         str   = ""
@@ -47,6 +48,7 @@ class RunRecord:
     critic_score:        int        = 0
     verdict:             str        = ""
     hallucination_flags: list[str]  = field(default_factory=list)
+    vagueness_flags:     list[str]  = field(default_factory=list)
     retry_count:         int        = 0
     answer_length:       int        = 0   # chars — proxy for answer completeness
 
@@ -72,8 +74,15 @@ def log_run(record: RunRecord) -> None:
         f.write(json.dumps(asdict(record)) + "\n")
 
 
-def load_runs(pipeline_type: Optional[str] = None) -> list[dict]:
-    """Load all logged runs, optionally filtered by pipeline type."""
+def load_runs(pipeline_type: Optional[str] = None, session_id: Optional[str] = None) -> list[dict]:
+    """
+    Load all logged runs, optionally filtered by pipeline type and/or
+    session. Runs logged before sessions existed have no "session_id" key
+    at all — r.get("session_id") returns None for those, so they simply
+    never match a specific session_id filter (correctly excluded, since
+    they predate sessions entirely) while still showing up when
+    session_id=None (no filter).
+    """
     if not LOG_PATH.exists():
         return []
     runs = []
@@ -83,8 +92,11 @@ def load_runs(pipeline_type: Optional[str] = None) -> list[dict]:
             if line:
                 try:
                     r = json.loads(line)
-                    if pipeline_type is None or r.get("pipeline_type") == pipeline_type:
-                        runs.append(r)
+                    if pipeline_type is not None and r.get("pipeline_type") != pipeline_type:
+                        continue
+                    if session_id is not None and r.get("session_id") != session_id:
+                        continue
+                    runs.append(r)
                 except json.JSONDecodeError:
                     continue
     return runs

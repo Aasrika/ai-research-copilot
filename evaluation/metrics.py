@@ -36,11 +36,12 @@ METRICS WE TRACK AND WHY:
 
 from collections import defaultdict, Counter
 from datetime    import datetime, timezone
+from typing      import Optional
 from evaluation.logger import load_runs
 
 
-def compute_metrics(pipeline_type: str = "qa") -> dict:
-    runs = load_runs(pipeline_type)
+def compute_metrics(pipeline_type: str = "qa", session_id: Optional[str] = None) -> dict:
+    runs = load_runs(pipeline_type, session_id)
     if not runs:
         return {"total_runs": 0}
 
@@ -123,11 +124,12 @@ def compute_metrics(pipeline_type: str = "qa") -> dict:
     }
 
 
-def compute_all_metrics() -> dict:
-    """Compute metrics across all pipeline types."""
+def compute_all_metrics(session_id: Optional[str] = None) -> dict:
+    """Compute metrics across all pipeline types, optionally scoped to one session."""
     return {
-        "qa":         compute_metrics("qa"),
-        "comparison": compute_metrics("comparison"),
-        "ideas":      compute_metrics("ideas"),
-        "combined":   compute_metrics(None),
+        "qa":         compute_metrics("qa", session_id),
+        "comparison": compute_metrics("comparison", session_id),
+        "ideas":      compute_metrics("ideas", session_id),
+        "critique":   compute_metrics("critique", session_id),
+        "combined":   compute_metrics(None, session_id),
     }
