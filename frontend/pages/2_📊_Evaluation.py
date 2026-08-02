@@ -20,23 +20,67 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
 import pandas as pd
+from core import session_manager
 from evaluation.metrics import compute_all_metrics
 from evaluation.logger  import load_runs, update_feedback
+
+
+def render_session_banner():
+    """Subtle, always-visible reminder of which session's data is on screen.
+    Duplicated identically across app.py / Evaluation.py / Critique.py —
+    every page in this app is already independent (own sys.path setup, no
+    shared layout module), so a 4-line function isn't worth a new shared
+    module just for this."""
+    active_id = st.session_state.get("active_session_id")
+    session = session_manager.get_session(active_id) if active_id else None
+    if not session:
+        st.caption("📁 No session selected — please create or select one from the main page sidebar.")
+        return
+    st.caption(f"📁 Active session: **{session['name']}**")
+
 
 st.set_page_config(page_title="Evaluation Dashboard", page_icon="📊", layout="wide")
 st.title("📊 Evaluation Dashboard")
 st.caption("Live metrics across all pipeline runs — refreshes on each page load.")
+render_session_banner()
+
+# ── Session filter ───────────────────────────────────────────────────────────
+sessions = session_manager.list_sessions()
+
+if not sessions:
+    st.info("No sessions exist yet — create one on the main page first.")
+    st.stop()
+
+session_names = {s["id"]: s["name"] for s in sessions}
+filter_options = ["All sessions"] + list(session_names.keys())
+
+# Default to the active session if one is set; otherwise "All sessions".
+# This only determines the widget's INITIAL value — once rendered, the
+# user's own selection persists across reruns like any Streamlit widget.
+active_id = st.session_state.get("active_session_id")
+default_index = filter_options.index(active_id) if active_id in filter_options else 0
+
+selected = st.selectbox(
+    "Filter by session",
+    filter_options,
+    index=default_index,
+    format_func=lambda x: "All sessions" if x == "All sessions" else session_names.get(x, x),
+)
+session_filter = None if selected == "All sessions" else selected
 
 # ── Refresh button ─────────────────────────────────────────────────────────
 if st.button("🔄 Refresh"):
     st.rerun()
 
-all_metrics = compute_all_metrics()
+all_metrics = compute_all_metrics(session_id=session_filter)
 m           = all_metrics["qa"]       # focus on Q&A metrics by default
 combined    = all_metrics["combined"]
 
 if combined.get("total_runs", 0) == 0:
-    st.info("No runs logged yet. Ask some questions in the main app first!")
+    if session_filter is None:
+        st.info("No runs logged yet. Ask some questions in the main app first!")
+    else:
+        st.info(f"No runs logged yet for session **{session_names.get(session_filter, session_filter)}**.")
     st.stop()
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -163,7 +207,7 @@ st.divider()
 # ════════════════════════════════════════════════════════════════════════════
 st.subheader("📋 Metrics By Pipeline Type")
 summary_rows = []
-for ptype in ["qa", "comparison", "ideas"]:
+for ptype in ["qa", "comparison", "ideas", "critique"]:
     pm = all_metrics[ptype]
     if pm.get("total_runs", 0) > 0:
         summary_rows.append({
@@ -185,7 +229,7 @@ st.divider()
 # ROW 6 — Raw Run Log
 # ════════════════════════════════════════════════════════════════════════════
 with st.expander("🗂️ Raw Run Log (last 50)"):
-    runs = load_runs()[-50:]
+    runs = load_runs(session_id=session_filter)[-50:]
     if runs:
         df_runs = pd.DataFrame(runs)[[
             "run_id","timestamp","pipeline_type","query",
