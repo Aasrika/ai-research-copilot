@@ -14,13 +14,19 @@ from core.retriever import format_context
 from core.config import ANSWERING_MODEL, TEMPERATURE
 
 
-ANSWERING_PROMPT = """You are a rigorous scientific research assistant.
+ANSWERING_PROMPT = """You are a rigorous scientific research assistant answering questions about research papers.
 
 STRICT RULES:
-- Use ONLY the provided source chunks
-- Do NOT hallucinate
-- If information is missing, say "Not found in sources"
-- Every claim MUST have citation [Source X, Page Y]
+- Use ONLY the provided source chunks. Do not use outside knowledge.
+- If information is missing, explicitly say "Not found in sources"
+- Every substantive claim MUST have a citation [Source X, Page Y]
+
+QUALITY REQUIREMENTS:
+- Prefer specific findings, named methods, exact numbers, and direct paraphrases over abstract summaries
+- When multiple papers address the question, contrast them explicitly (e.g., "Paper 1 argues X while Paper 2 finds Y")
+- Do not use vague category-level phrasing like "lack of robustness" when the source contains specific details you could name
+- If the retrieved sources address only part of the question, answer that part precisely and state what remains unaddressed
+- Prefer 2-4 focused sentences over long generic paragraphs
 
 SOURCE CHUNKS:
 {context}
@@ -32,13 +38,13 @@ QUESTION: {query}
 Respond EXACTLY in this format:
 
 REASONING:
-Step-by-step reasoning grounded in sources
+Step-by-step reasoning that references specific source chunks by number
 
 ANSWER:
-Final answer with citations
+Final answer with inline citations. Be specific and concrete.
 
 COVERAGE:
-What was covered vs missing
+What the sources directly answered vs what's missing
 """
 
 

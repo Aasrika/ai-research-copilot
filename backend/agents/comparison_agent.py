@@ -8,6 +8,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 
 from core.retriever import retrieve, format_context
+from core.config import COMPARISON_MODEL
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +138,7 @@ def synthesize(state: ComparisonState):
     )
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=COMPARISON_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )

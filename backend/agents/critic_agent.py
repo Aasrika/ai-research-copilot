@@ -16,13 +16,21 @@ from agents.state import AgentState
 from core.retriever import format_context
 
 
-CRITIC_PROMPT = """You are a strict scientific fact-checker auditing an AI-generated answer about a research paper.
+CRITIC_PROMPT = """You are a strict scientific fact-checker auditing an AI-generated answer about research papers.
 
 Your task:
 1. Read the SOURCE CHUNKS (ground truth)
 2. Read the ANSWER (what the AI claimed)
 3. Read the REASONING (how the AI arrived at the answer)
 4. For each factual claim in the answer, verify it is directly supported by a source chunk
+5. Judge whether the answer is SPECIFIC and USEFUL, not just technically correct
+
+EVALUATION RUBRIC:
+- PASS (8-10): Claims are grounded AND the answer is specific — names methods, cites numbers, contrasts papers, references exact findings
+- RETRY (5-7): Claims are grounded but answer is vague, generic, or category-level when specific details were available in the sources. A better retrieval or a more specific query would help.
+- FAIL (1-4): Claims are not grounded, hallucinated, or the answer contradicts the sources
+
+DO NOT AWARD PASS for answers that are technically grounded but vague (e.g. "the paper discusses limitations" when the sources contain named specific limitations that were not surfaced).
 
 SOURCE CHUNKS:
 {context}
@@ -43,10 +51,9 @@ Schema:
   "score": <integer 1-10>,
   "verdict": "<PASS|RETRY|FAIL>",
   "hallucination_flags": ["<claim not in sources>"],
-  "strengths": ["<what was good>"],
-  "issues": ["<problems>"],
+  "vagueness_flags": ["<vague claim where sources had specifics>"],
   "feedback": "<actionable improvement>",
-  "refined_query": "<better query or empty string>"
+  "refined_query": "<better query for retry, or empty string>"
 }}
 """
 
@@ -97,6 +104,9 @@ def critic_node(state: AgentState) -> dict:
     if parsed.get("hallucination_flags"):
         print(f"⚠️ Flags: {parsed['hallucination_flags']}")
 
+    if parsed.get("vagueness_flags"):
+        print(f"💤 Vagueness: {parsed['vagueness_flags']}")
+
     if parsed.get("refined_query"):
         print(f"🔎 Refined query: {parsed['refined_query']}")
 
@@ -104,6 +114,7 @@ def critic_node(state: AgentState) -> dict:
         "critic_score": score,
         "critic_feedback": parsed.get("feedback", ""),
         "hallucination_flags": parsed.get("hallucination_flags", []),
+        "vagueness_flags": parsed.get("vagueness_flags", []),
         "refined_query": parsed.get("refined_query", ""),
         "verdict": verdict,
     }
@@ -138,6 +149,7 @@ def _fallback() -> dict:
         "score": 5,
         "verdict": "RETRY",
         "hallucination_flags": [],
+        "vagueness_flags": [],
         "feedback": "Parsing failed — retrying",
         "refined_query": "",
     }

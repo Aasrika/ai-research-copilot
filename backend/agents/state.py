@@ -37,6 +37,7 @@ class AgentState(TypedDict):
     critic_score: int
     critic_feedback: str
     hallucination_flags: List[str]
+    vagueness_flags: List[str]
     refined_query: str
     verdict: str  # "PASS" | "RETRY" | "FAIL"
 

@@ -97,6 +97,7 @@ def run_pipeline(
     k:            int  = 5,
     paper_filter: str  = None,
     max_retries:  int  = 2,
+    session_id:   str  = None,
 ) -> AgentState:
 
     timer = RunTimer()
@@ -116,6 +117,7 @@ def run_pipeline(
         "critic_score":        0,
         "critic_feedback":     "",
         "hallucination_flags": [],
+        "vagueness_flags":     [],
 
         "refined_query": "",
         "verdict":       "",
@@ -146,6 +148,7 @@ def run_pipeline(
     # ── Build log record ───────────────────────────────────────────────────
     record = RunRecord(
         pipeline_type        = "qa",
+        session_id           = session_id,
         query                = query,
         paper_filter         = paper_filter,
         k                    = k,
@@ -153,6 +156,7 @@ def run_pipeline(
         critic_score         = final_state.get("critic_score", 0),
         verdict              = final_state.get("verdict", ""),
         hallucination_flags  = final_state.get("hallucination_flags", []),
+        vagueness_flags      = final_state.get("vagueness_flags", []),
 
         retry_count          = final_state.get("retry_count", 0),
         answer_length        = len(final_state.get("answer", "")),
