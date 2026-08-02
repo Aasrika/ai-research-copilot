@@ -143,15 +143,15 @@ def build_or_update_index(pdf_paths: list[str], index_dir: str = str(INDICES_DIR
         return new_store
 
 
-def load_index() -> FAISS:
+def load_index(index_dir: str = str(INDICES_DIR)) -> FAISS:
     embeddings = get_embedding_model()
-    return FAISS.load_local(str(INDICES_DIR), embeddings,
+    return FAISS.load_local(str(index_dir), embeddings,
                            allow_dangerous_deserialization=True)
 
 
 def get_indexed_papers(index_dir: str = str(INDICES_DIR)) -> list[str]:
     try:
-        store = load_index()
+        store = load_index(index_dir)
         titles = set()
 
         for doc_id in store.docstore._dict:

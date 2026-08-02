@@ -4,5 +4,6 @@ __pycache__/
 .env
 data/papers/*.pdf
 data/indices/
+data/sessions/
 .DS_Store
 *.egg-info/
