@@ -31,6 +31,23 @@ CRITIQUE_MODEL = "llama-3.3-70b-versatile"  # larger model for claim extraction/
 TEMPERATURE = 0
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# COST ESTIMATION
+# ─────────────────────────────────────────────────────────────────────────────
+# Groq itself is free/low-cost for this project's usage — these rates
+# approximate what the equivalent OPENAI production cost would be, purely so
+# the evaluation dashboard can demonstrate cost-awareness. $ per million
+# tokens, keyed by the ACTUAL model name used for a given call (not by
+# pipeline/agent), so the estimate stays correct automatically if a model
+# assignment above changes later (e.g. downgrading ANSWERING_MODEL back to
+# 8B while keeping CRITIC_MODEL on 70B).
+MODEL_COST_PER_MILLION_TOKENS = {
+    "llama-3.1-8b-instant":    {"input": 0.15, "output": 0.60},    # GPT-4o-mini equivalent
+    "llama-3.3-70b-versatile": {"input": 2.50, "output": 10.00},   # GPT-4o equivalent
+}
+DEFAULT_COST_PER_MILLION_TOKENS = {"input": 0.15, "output": 0.60}
+
+
 CHUNK_SIZE        = 800    
 CHUNK_OVERLAP     = 150    
 
