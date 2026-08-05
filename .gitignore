@@ -7,3 +7,4 @@ data/indices/
 data/sessions/
 .DS_Store
 *.egg-info/
+.streamlit/config.toml.bak*

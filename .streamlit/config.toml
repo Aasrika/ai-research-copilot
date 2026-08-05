@@ -1,7 +1,21 @@
+# Dark theme + violet accent. Previous (warm light) theme backed up in
+# config.toml.bak; the dark/purple theme before that is in
+# config.toml.bak.old. This file is the sole source of truth for app
+# theming — see frontend/app.py, which no longer overrides any theme
+# colors via custom CSS.
+
 [theme]
-base="dark"
-primaryColor="#7C3AED"
-backgroundColor="#0B0F19"
-secondaryBackgroundColor="#111827"
-textColor="#E5E7EB"
-font="sans serif"
+base = "dark"
+primaryColor = "#8B5CF6"
+backgroundColor = "#0F1419"
+secondaryBackgroundColor = "#1A1F26"
+textColor = "#E4E7EB"
+font = "sans serif"
+borderColor = "#2D3540"
+baseRadius = "medium"
+headingFont = "sans serif"
+codeFont = "monospace"
+
+[theme.sidebar]
+backgroundColor = "#151A21"
+textColor = "#E4E7EB"
