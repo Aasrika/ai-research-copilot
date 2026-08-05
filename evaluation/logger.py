@@ -63,6 +63,15 @@ class RunRecord:
     sections_retrieved:  list[str] = field(default_factory=list)   # which sections appeared
     papers_retrieved:    list[str] = field(default_factory=list)
 
+    # Token usage / estimated cost. None (not 0) means "not tracked" — lets
+    # the dashboard tell a genuinely-zero-cost run apart from a pre-existing
+    # run logged before this field existed.
+    prompt_tokens:       Optional[int]   = None
+    completion_tokens:   Optional[int]   = None
+    total_tokens:        Optional[int]   = None
+    estimated_cost_usd:  Optional[float] = None
+    tokens_estimated:    bool            = False  # True if any call fell back to the chars/4 estimate
+
     # User feedback (set later via /feedback endpoint)
     user_rating:    Optional[int] = None   # 1-5 thumbs from UI
     user_comment:   Optional[str] = None

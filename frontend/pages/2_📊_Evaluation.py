@@ -7,11 +7,14 @@ File naming convention:  {order}_{emoji}_{Title}.py
 Streamlit picks it up automatically from the pages/ folder.
 
 WHAT THIS DASHBOARD SHOWS:
-  Row 1: Headline KPIs — pass rate, avg score, hallucination rate, avg latency
-  Row 2: Score trend + Verdict distribution
-  Row 3: Latency breakdown + Section distribution
-  Row 4: Failure analysis — weak runs + top hallucination flags
-  Row 5: Raw run log (last 50)
+  Row 1:    Headline KPIs — pass rate, avg score, hallucination rate
+  Row 1.5:  Latency percentiles (p50/p95/p99) — Q&A
+  Row 1.75: Cost & token usage — combined across all pipeline types
+  Row 2:    Score trend + Verdict distribution
+  Row 3:    Latency breakdown (stage averages) + Section distribution
+  Row 4:    Failure analysis — weak runs + top hallucination flags
+  Row 5:    Per-pipeline-type summary (incl. tokens/cost — which flow is most token-hungry)
+  Row 6:    Raw run log (last 50)
 """
 
 import sys, os
@@ -21,7 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import streamlit as st
 import pandas as pd
 from core import session_manager
-from evaluation.metrics import compute_all_metrics
+from evaluation.metrics import compute_all_metrics, MIN_RUNS_FOR_TAIL_LATENCY
 from evaluation.logger  import load_runs, update_feedback
 
 
@@ -87,7 +90,7 @@ if combined.get("total_runs", 0) == 0:
 # ROW 1 — KPI Tiles
 # ════════════════════════════════════════════════════════════════════════════
 st.subheader("📈 Key Performance Indicators")
-k1, k2, k3, k4, k5 = st.columns(5)
+k1, k2, k3, k4 = st.columns(4)
 
 k1.metric("Total Runs",          combined["total_runs"])
 k2.metric("Pass Rate",           f"{m.get('pass_rate', 0)}%",
@@ -97,7 +100,45 @@ k4.metric("Hallucination Rate",  f"{m.get('hallucination_rate', 0)}%",
           help="% of runs with ≥1 unverified claim flagged",
           delta=f"-{m.get('hallucination_rate',0)}%" if m.get('hallucination_rate',0) < 20 else None,
           delta_color="inverse")
-k5.metric("Avg Latency",         f"{m.get('latency', {}).get('total', 0)}s")
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════════════════════
+# ROW 1.5 — Latency Percentiles (Q&A) — averages hide the tail; a system
+# with p50=1s but p99=30s looks fine on average but is terrible in practice.
+# ════════════════════════════════════════════════════════════════════════════
+st.subheader("⏱️ Latency Percentiles (Q&A)")
+lat_kpi = m.get("latency", {})
+lp1, lp2, lp3 = st.columns(3)
+lp1.metric("Median Latency (p50)", f"{lat_kpi.get('p50', 0)}s")
+if lat_kpi.get("enough_for_tail"):
+    lp2.metric("p95 Latency", f"{lat_kpi.get('p95')}s")
+    lp3.metric("p99 Latency", f"{lat_kpi.get('p99')}s")
+else:
+    lp2.metric("p95 Latency", "Not enough data")
+    lp3.metric("p99 Latency", "Not enough data")
+    st.caption(f"p95 / p99: not enough data (need {MIN_RUNS_FOR_TAIL_LATENCY}+ runs) — "
+               "a single slow run would otherwise swing these wildly.")
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════════════════════
+# ROW 1.75 — Cost & Token Usage (combined across all pipeline types — see
+# Row 5 below for the per-pipeline-type breakdown of which flow is most
+# token-hungry)
+# ════════════════════════════════════════════════════════════════════════════
+st.subheader("💰 Cost & Token Usage")
+tokens_kpi = combined.get("tokens", {})
+c1, c2, c3 = st.columns(3)
+c1.metric("Total Tokens", f"{tokens_kpi.get('total_tokens', 0):,}")
+c2.metric("Estimated Cost", f"${tokens_kpi.get('total_cost_usd', 0):.4f}",
+          help="Estimated equivalent OpenAI production cost — see MODEL_COST_PER_MILLION_TOKENS in config.py. Groq itself is far cheaper for this project's actual usage.")
+c3.metric("Avg Tokens / Run", f"{tokens_kpi.get('avg_tokens_per_run', 0):,}")
+
+if tokens_kpi.get("untracked_runs", 0) > 0:
+    st.caption(f"{tokens_kpi['untracked_runs']} run(s) predate token tracking and are excluded from these totals.")
+if tokens_kpi.get("any_estimated"):
+    st.caption("Some runs used an estimated token count (chars ÷ 4) because the API response didn't include usage data.")
 
 st.divider()
 
@@ -147,15 +188,15 @@ col_lat, col_sec = st.columns(2)
 with col_lat:
     st.subheader("⏱️ Latency Breakdown")
     lat = m.get("latency", {})
-    if lat.get("total", 0) > 0:
+    if lat.get("p50", 0) > 0:
         df_lat = pd.DataFrame({
             "Stage":   ["Retrieval", "Generation", "Critic"],
             "Seconds": [lat["retrieval"], lat["generation"], lat["critic"]]
         }).set_index("Stage")
         st.bar_chart(df_lat)
-        st.caption(f"Total avg: **{lat['total']}s** end-to-end")
-        if lat["total"] > 15:
-            st.warning("Latency > 15s — consider caching frequent queries or using gpt-4o-mini for critic too.")
+        st.caption(f"Median (p50): **{lat['p50']}s** end-to-end — see the Latency Percentiles KPIs above for p95/p99.")
+        if lat["p50"] > 15:
+            st.warning("Median latency > 15s — consider caching frequent queries or using gpt-4o-mini for critic too.")
     else:
         st.info("No latency data yet.")
 
@@ -206,17 +247,21 @@ st.divider()
 # ROW 5 — All Pipeline Types Summary
 # ════════════════════════════════════════════════════════════════════════════
 st.subheader("📋 Metrics By Pipeline Type")
+st.caption("Total Tokens / Est. Cost show which flow is most token-hungry.")
 summary_rows = []
 for ptype in ["qa", "comparison", "ideas", "critique"]:
     pm = all_metrics[ptype]
     if pm.get("total_runs", 0) > 0:
+        pm_tokens = pm.get("tokens", {})
         summary_rows.append({
             "Pipeline":          ptype.title(),
             "Runs":              pm["total_runs"],
             "Avg Score":         pm.get("avg_critic_score", "N/A"),
             "Pass Rate":         f"{pm.get('pass_rate', 0)}%",
             "Hallucination Rate":f"{pm.get('hallucination_rate', 0)}%",
-            "Avg Latency (s)":   pm.get("latency", {}).get("total", "N/A"),
+            "p50 Latency (s)":   pm.get("latency", {}).get("p50", "N/A"),
+            "Total Tokens":      pm_tokens.get("total_tokens", 0),
+            "Est. Cost ($)":     round(pm_tokens.get("total_cost_usd", 0), 4),
         })
 
 if summary_rows:
@@ -231,11 +276,15 @@ st.divider()
 with st.expander("🗂️ Raw Run Log (last 50)"):
     runs = load_runs(session_id=session_filter)[-50:]
     if runs:
-        df_runs = pd.DataFrame(runs)[[
+        # reindex (not direct [[...]] selection) so runs logged before token
+        # tracking existed — missing these columns entirely — show as blank
+        # instead of raising a KeyError.
+        df_runs = pd.DataFrame(runs).reindex(columns=[
             "run_id","timestamp","pipeline_type","query",
             "critic_score","verdict","retry_count",
-            "latency_total","num_chunks"
-        ]]
+            "latency_total","num_chunks",
+            "total_tokens","estimated_cost_usd",
+        ])
         df_runs["query"]     = df_runs["query"].str[:60] + "..."
         df_runs["timestamp"] = df_runs["timestamp"].str[:16]
         st.dataframe(df_runs, use_container_width=True, hide_index=True)

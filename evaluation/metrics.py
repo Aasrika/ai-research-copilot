@@ -39,6 +39,26 @@ from datetime    import datetime, timezone
 from typing      import Optional
 from evaluation.logger import load_runs
 
+# p95/p99 are noise below this many samples — a single slow run can swing
+# them wildly, so the dashboard shows "not enough data" instead of a number
+# that looks precise but isn't.
+MIN_RUNS_FOR_TAIL_LATENCY = 20
+
+
+def _percentile(sorted_values: list[float], pct: float) -> Optional[float]:
+    """Linear-interpolation percentile over an already-sorted list — no
+    numpy dependency, matching this module's existing dependency-light style."""
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    k = (len(sorted_values) - 1) * (pct / 100)
+    f = int(k)
+    c = min(f + 1, len(sorted_values) - 1)
+    if f == c:
+        return sorted_values[f]
+    return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
+
 
 def compute_metrics(pipeline_type: str = "qa", session_id: Optional[str] = None) -> dict:
     runs = load_runs(pipeline_type, session_id)
@@ -61,11 +81,37 @@ def compute_metrics(pipeline_type: str = "qa", session_id: Optional[str] = None)
     # ── Latency breakdown ──────────────────────────────────────────────────
     def avg(lst): return round(sum(lst) / len(lst), 3) if lst else 0
 
+    sorted_latencies = sorted(latencies)
+    enough_for_tail   = len(sorted_latencies) >= MIN_RUNS_FOR_TAIL_LATENCY
+    p50 = _percentile(sorted_latencies, 50)
+    p95 = _percentile(sorted_latencies, 95) if enough_for_tail else None
+    p99 = _percentile(sorted_latencies, 99) if enough_for_tail else None
+
     latency_breakdown = {
-        "total":      avg(latencies),
-        "retrieval":  avg([r.get("latency_retrieval", 0) for r in runs]),
-        "generation": avg([r.get("latency_generation", 0) for r in runs]),
-        "critic":     avg([r.get("latency_critic", 0) for r in runs]),
+        "p50":             round(p50, 3) if p50 is not None else 0,
+        "p95":             round(p95, 3) if p95 is not None else None,
+        "p99":             round(p99, 3) if p99 is not None else None,
+        "enough_for_tail": enough_for_tail,
+        "retrieval":       avg([r.get("latency_retrieval", 0) for r in runs]),
+        "generation":      avg([r.get("latency_generation", 0) for r in runs]),
+        "critic":          avg([r.get("latency_critic", 0) for r in runs]),
+    }
+
+    # ── Token / cost tracking ───────────────────────────────────────────────
+    # total_tokens is None (not 0) for runs logged before this field existed
+    # — those are excluded from cost/token aggregates entirely rather than
+    # silently counted as zero-cost.
+    token_tracked = [r for r in runs if r.get("total_tokens") is not None]
+    total_tokens  = sum(r["total_tokens"] for r in token_tracked)
+    total_cost    = sum(r.get("estimated_cost_usd") or 0.0 for r in token_tracked)
+
+    token_stats = {
+        "tracked_runs":       len(token_tracked),
+        "untracked_runs":     n - len(token_tracked),
+        "total_tokens":       total_tokens,
+        "total_cost_usd":     round(total_cost, 4),
+        "avg_tokens_per_run": round(total_tokens / len(token_tracked), 1) if token_tracked else 0,
+        "any_estimated":      any(r.get("tokens_estimated") for r in token_tracked),
     }
 
     # ── Trends (last 20 runs, chronological) ──────────────────────────────
@@ -121,6 +167,7 @@ def compute_metrics(pipeline_type: str = "qa", session_id: Optional[str] = None)
         "top_flags":           top_flags,
         "weak_runs":           weak_runs,
         "user_feedback":       user_stats,
+        "tokens":              token_stats,
     }
 
 
