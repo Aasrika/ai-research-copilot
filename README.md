@@ -1,211 +1,154 @@
-# 🧠 AI Research Copilot
+# AI Research Copilot
 
-A multi-agent **Retrieval-Augmented Generation (RAG)** system designed to analyze, interpret, and query research papers with grounded, citation-backed answers.
+*A multi-agent RAG system for research paper Q&A, comparison, and draft critique — grounded, self-correcting, and observable.*
 
----
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.56-red)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Deployed](https://img.shields.io/badge/Deployed-Streamlit_Cloud-brightgreen)
 
-## 🚀 Overview
+## 🚀 Live Demo
 
-AI Research Copilot helps users **ask questions over research papers** and receive **factually grounded answers with citations**, reducing hallucinations and improving interpretability.
+**Live at:** [research-copilot-app.streamlit.app](https://research-copilot-app.streamlit.app)
 
-Built as a modular system with **retrieval, reasoning, and critic agents**, it simulates a research assistant pipeline similar to real-world AI systems.
+> Note: The app runs on Streamlit Community Cloud's free tier. Cold starts may take 30-60 seconds after periods of inactivity.
 
----
+![Landing page](docs/screenshots/01-landing.jpg)
 
-## ✨ Key Features
+## Overview
 
-* 📄 **PDF Parsing & Smart Chunking**
+Researchers working through a literature review, comparing methodologies, or checking their own draft against the field face a common problem: staying grounded in evidence rather than in generic summaries or LLM hallucinations. Existing tools either retrieve without verification or generate without citations.
 
-  * Extracts structured sections (methods, results, etc.)
-  * Preserves metadata like page number and section
+AI Research Copilot combines multi-agent orchestration with grounded retrieval to help researchers engage with papers more rigorously. Upload literature into a session, then ask questions, compare papers, generate follow-up research ideas, or critique your own draft against the uploaded evidence.
 
-* 🔍 **Semantic Retrieval (FAISS + MMR)**
+Built for undergraduate and graduate researchers, PhD students planning follow-up work, and anyone doing structured literature engagement.
 
-  * Dense vector search using SentenceTransformers
-  * Maximal Marginal Relevance (MMR) for diverse retrieval
+## Features
 
-* 🤖 **LLM-Based Grounded Answering**
+### Ask
 
-  * Groq-powered inference (LLaMA 3.x)
-  * Answers strictly based on retrieved sources
+Query your literature with grounded, cited answers. The system retrieves relevant passages via section-aware FAISS retrieval, generates responses with inline citations, and passes every answer through a critic agent that verifies grounding and catches vague or hallucinated content. When the critic flags an answer as insufficient, the system generates a refined query and retries automatically.
 
-* 📌 **Citation-Based Responses**
+![Ask tab](docs/screenshots/02-ask-tab.jpg)
 
-  * Inline citations: `[Source N, Page P]`
-  * Full transparency of reasoning
+### Compare
 
-* 🔁 **Critic & Retry Mechanism**
+Side-by-side comparison of two papers. Choose from preset dimensions (datasets, methodology, results, limitations) or type a custom aspect. Returns a structured table making differences easy to scan.
 
-  * Evaluates answer quality (score + verdict)
-  * Automatically retries with feedback
+![Compare tab](docs/screenshots/03-compare-tab.jpg)
 
-* 📊 **Evaluation Dashboard**
+### Follow-up Ideas
 
-  * Pass rate, hallucination rate, latency
-  * Failure analysis and weak runs tracking
+Surface research gaps, open questions, and concrete follow-up experiment ideas from any paper. Useful when planning your own research building on existing work.
 
-* 🎨 **Interactive Streamlit UI**
+### Draft Critique
 
-  * Clean multi-page interface
-  * Query, explore sources, and view metrics
+Section-presence check plus claim-vs-literature alignment for your own draft. The system extracts atomic claims from your draft, retrieves relevant literature passages, and classifies each claim as SUPPORTED, CONTRADICTED, or SILENT — with grounded evidence quotes and citation suggestions.
 
----
+![Critique report](docs/screenshots/04-critique-report.jpg)
 
-## 🧱 System Architecture
+![Claim details](docs/screenshots/06-critique-claim-details.jpg)
 
-```text
-User Query
-   ↓
-Retriever (FAISS + MMR)
-   ↓
-Answering Agent (LLM + Prompting)
-   ↓
-Critic Agent (Evaluation + Feedback)
-   ↓
-Retry Loop (if needed)
-   ↓
-Final Answer + Citations
-```
+## Observability
 
----
+The Evaluation dashboard tracks system health across every run: pass rate, hallucination detection rate, latency percentiles (p50/p95/p99 with a 20-run minimum for statistical validity), and per-pipeline-type cost tracking with token estimation.
 
-## 🛠️ Tech Stack
+![Evaluation dashboard](docs/screenshots/05-evaluation-dashboard.jpg)
 
-* **LLMs:** Groq (LLaMA 3.x)
-* **Frameworks:** LangChain, LangGraph
-* **Vector DB:** FAISS
-* **Embeddings:** SentenceTransformers (MiniLM)
-* **Backend:** Python
-* **Frontend:** Streamlit
-* **Evaluation:** Custom metrics + logging system
+## Architecture
 
----
+- **Multi-agent orchestration:** LangGraph-based state machines. Q&A uses a retriever → answering → critic → retry loop where the critic can send answers back for refined retrieval. Critique uses a linear pipeline: section-check → claim extraction → evidence retrieval → classification → report assembly.
 
-## 📂 Project Structure
+- **Session isolation:** Each session gets its own FAISS index and storage directory. Papers, drafts, and evaluation logs don't leak across sessions. Session state persists across app restarts via JSON manifest.
 
-```text
-ai-research-copilot/
-│
-├── backend/
-│   ├── agents/          # Answering + Critic agents
-│   ├── core/            # Retrieval, config, processing
-│   ├── evaluation/      # Metrics + logging
-│
-├── frontend/
-│   ├── app.py           # Main Streamlit app
-│   ├── pages/           # Dashboard + additional views
-│
-├── data/                # Research papers (PDFs)
-├── test_graph.py        # Pipeline testing
-├── test_ideas.py        # Idea generation agent
-```
+- **Grounded retrieval:** Section-aware FAISS with metadata filtering. Retrieval can be scoped to specific papers via checkbox selection in the sidebar.
 
----
+- **Two-model strategy:** Fast synthesis via Llama 3.1 8B (Groq), reasoning-heavy tasks (critic verification, critique classification) via Llama 3.3 70B.
 
-## ⚙️ Setup & Run (No Docker)
+- **Programmatic safety net:** For CONTRADICTED verdicts in the critique feature, the system verifies the classifier's quoted contradicting sentence actually appears in retrieved context before displaying it — automatic downgrade to SILENT if not found. Prevents overconfident false-positive contradictions.
 
-### 1. Clone the repo
+## Tech Stack
+
+| Layer | Tools |
+|-------|-------|
+| Frontend | Streamlit |
+| Orchestration | LangGraph, LangChain |
+| LLM Provider | Groq (Llama 3.1 8B, Llama 3.3 70B) |
+| Vector Store | FAISS |
+| Embeddings | SentenceTransformers (all-MiniLM-L6-v2) |
+| PDF Parsing | PyMuPDF |
+| Data Validation | Pydantic |
+| Deployment | Streamlit Community Cloud |
+
+## Validation
+
+Validated end-to-end using a real IEEE-published paper as the draft (EdgeBlockAI, presented at IEEE AIDE 2026) with four related supply-chain anomaly detection papers as literature.
+
+Results:
+
+- **Section detection:** 8/8 canonical sections correctly identified
+- **Claim extraction:** 12/12 real claims extracted from the paper (no hallucinated claims)
+- **Classification:** 2 SUPPORTED verdicts (both with valid supporting evidence), 10 SILENT verdicts (correctly — those claims are paper-specific and unaddressed by the chosen literature), 0 false CONTRADICTED
+
+The tool showed appropriate conservatism — no false-positive support claims and no manufactured contradictions.
+
+## Local Setup
+
+### Prerequisites
+
+- Python 3.11 or 3.12
+- Git
+- A Groq API key (free tier available at [console.groq.com](https://console.groq.com))
+
+### Installation
 
 ```bash
-git clone https://github.com/your-username/ai-research-copilot.git
+git clone https://github.com/Aasrika/ai-research-copilot.git
 cd ai-research-copilot
-```
-
-### 2. Create virtual environment
-
-```bash
 python -m venv venv
-venv\Scripts\activate   # Windows
-```
-
-### 3. Install dependencies
-
-```bash
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Set API Key
+### Configuration
 
-```bash
-set GROQ_API_KEY=your_api_key   # Windows
-```
-
----
-
-## ▶️ Run the Application
-
-### Streamlit UI
+Create a `.env` file in the project root:
+GROQ_API_KEY=your_groq_api_key_here
+### Run
 
 ```bash
 streamlit run frontend/app.py
 ```
 
-Open: http://localhost:8501
+The app will be available at `http://localhost:8501`
 
----
+## Known Limitations
 
-### (Optional) Run API
+- **Free-tier constraints:** Streamlit Community Cloud has memory constraints; cold starts take 30-60 seconds. Groq free tier limits total daily tokens to ~100K, so heavy usage will hit rate limits.
 
-```bash
-uvicorn backend.api.main:app --reload --port 8000
-```
+- **Compound claim handling:** The critique classifier handles atomic claims well but can be slightly generous on compound claims — it validates the supported clause without always flagging unsupported subclauses.
 
----
+- **Non-standard paper formats:** Section detection is rule-based and handles IEEE and ACM formats well (including Roman numeral sections like "II. LITERATURE REVIEW"). Very unusual layouts or heavily image-based PDFs may not parse cleanly.
 
-## 🧪 Testing
+- **Single-user by design:** Sessions are stored in-memory and on local filesystem. Not designed for concurrent multi-user access.
 
-```bash
-python test_graph.py
-```
+- **Model capability floor:** Runs on Llama 3.1 8B and 3.3 70B via Groq. Some nuanced reasoning tasks may benefit from larger models.
 
----
+## Future Work
 
-## 📊 Evaluation Metrics
+- React frontend for a more polished UX (v2)
+- Multi-user authentication for team deployment
+- Compound-claim decomposition for finer-grained critique
+- Multi-modal understanding (parse figures and tables in papers)
+- Support for additional LLM providers (Anthropic Claude, OpenAI)
 
-The system tracks:
-
-* ✅ Pass Rate
-* 📉 Critic Score (0–10)
-* ⚠️ Hallucination Rate
-* ⏱️ Latency Breakdown
-* 🔁 Retry Count
-
----
-
-## 🎯 Key Highlights (Resume-Ready)
-
-* Built a **multi-agent RAG system** with retrieval, reasoning, and evaluation loops
-* Reduced hallucinations using **grounded prompting + critic feedback**
-* Designed an **end-to-end pipeline with real-time evaluation dashboard**
-* Implemented **semantic search with FAISS + MMR for improved retrieval diversity**
-* Developed an **interactive UI for research exploration and analysis**
-
----
-
-## 🚧 Future Improvements
-
-* Cross-paper reasoning & comparison
-* Better section-aware retrieval
-* Caching & performance optimization
-* Support for larger document collections
-
----
-
-## 📌 Status
-
-✅ Phase 1: Core pipeline
-✅ Phase 2: Grounded RAG system
-🔄 Phase 3 (Planned): Advanced reasoning + scaling
-
----
-
-## 👩‍💻 Author
+## Contact
 
 **Aasrika Kambhampati**
-B.Tech Computer Science (AI/ML)
 
----
+- LinkedIn: [aasrika-kambhampati](https://www.linkedin.com/in/aasrika-kambhampati-b66607320)
+- GitHub: [@Aasrika](https://github.com/Aasrika)
 
-## ⭐ If you found this useful
+## Acknowledgments
 
-Give this repo a star — it helps visibility!
+Design draws inspiration from Elicit and modern developer tools like Linear and Vercel dashboards. LangGraph and Groq made the multi-agent orchestration and fast inference practical for a solo-developed project.
