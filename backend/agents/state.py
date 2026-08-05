@@ -14,7 +14,7 @@ Think of this as the "working memory" of the multi-agent system.
 Every agent reads what it needs and writes what it produces.
 """
 
-from typing import TypedDict, Optional, List
+from typing import TypedDict, Optional, Union, List
 from langchain_core.documents import Document
 
 
@@ -22,7 +22,7 @@ class AgentState(TypedDict):
 
     # ── Input ──────────────────────────────────────────────────────────────
     query: str
-    paper_filter: Optional[str]
+    paper_filter: Optional[Union[str, List[str]]]
     k: int
 
     # ── Retriever output ───────────────────────────────────────────────────
@@ -44,3 +44,11 @@ class AgentState(TypedDict):
     # ── Loop control ──────────────────────────────────────────────────────
     retry_count: int
     max_retries: int
+
+    # ── Token/cost tracking (accumulated across every LLM call, including
+    #    retries — see core/token_tracking.py) ──────────────────────────────
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    tokens_estimated: bool

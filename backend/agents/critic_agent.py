@@ -14,6 +14,7 @@ from groq import Groq
 from core.config import CRITIC_MODEL
 from agents.state import AgentState
 from core.retriever import format_context
+from core.token_tracking import accumulate, read_totals
 
 
 CRITIC_PROMPT = """You are a strict scientific fact-checker auditing an AI-generated answer about research papers.
@@ -79,6 +80,7 @@ def critic_node(state: AgentState) -> dict:
 
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+    response = None
     try:
         response = client.chat.completions.create(
         model=CRITIC_MODEL,
@@ -93,6 +95,12 @@ def critic_node(state: AgentState) -> dict:
         raw_output = ""
 
     print("\n🧠 RAW CRITIC OUTPUT:\n", raw_output)
+
+    # response is None if the call itself raised — nothing to extract usage
+    # from, so the running totals just pass through unchanged.
+    token_totals = read_totals(state)
+    if response is not None:
+        token_totals = accumulate(token_totals, response, CRITIC_MODEL, prompt, raw_output or "")
 
     parsed = _parse_critic_response(raw_output)
 
@@ -117,6 +125,7 @@ def critic_node(state: AgentState) -> dict:
         "vagueness_flags": parsed.get("vagueness_flags", []),
         "refined_query": parsed.get("refined_query", ""),
         "verdict": verdict,
+        **token_totals,
     }
 
 

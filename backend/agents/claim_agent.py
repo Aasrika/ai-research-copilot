@@ -19,6 +19,7 @@ from groq import Groq
 
 from core.config import CRITIQUE_MODEL
 from agents.critique_state import CritiqueState
+from core.token_tracking import accumulate, read_totals
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -59,6 +60,7 @@ def extract_claims_node(state: CritiqueState) -> dict:
 
     prompt = CLAIM_EXTRACTION_PROMPT.format(draft_text=draft_text, max_claims=max_claims)
 
+    response = None
     try:
         response = client.chat.completions.create(
             model=CRITIQUE_MODEL,
@@ -74,7 +76,11 @@ def extract_claims_node(state: CritiqueState) -> dict:
 
     print(f"\n🧾 Extracted {len(claims)} claims")
 
-    return {"claims": claims}
+    token_totals = read_totals(state)
+    if response is not None:
+        token_totals = accumulate(token_totals, response, CRITIQUE_MODEL, prompt, raw_output)
+
+    return {"claims": claims, **token_totals}
 
 
 def _parse_claims(raw: str, max_claims: int) -> list[dict]:

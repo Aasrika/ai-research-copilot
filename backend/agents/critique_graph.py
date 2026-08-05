@@ -28,6 +28,7 @@ from agents.evidence_agent import retrieve_evidence_node
 from agents.classification_agent import classify_claims_node
 from core.critique_models import CritiqueReport
 from evaluation.logger import RunRecord, log_run
+from core.token_tracking import empty_totals
 
 
 def _assemble_report_node(state: CritiqueState) -> dict:
@@ -111,6 +112,8 @@ def run_critique(
 
         "report": {},
         "run_id": "",
+
+        **empty_totals(),
     }
 
     print(f"\n{'='*60}")
@@ -132,12 +135,17 @@ def run_critique(
         for ev in claim.get("evidence", [])
     })
     record = RunRecord(
-        pipeline_type    = "critique",
-        session_id       = session_id,
-        query            = f"Critique: {report.draft_filename}",
-        num_chunks       = len(report.claims),
-        papers_retrieved = papers_cited,
-        latency_total    = elapsed,
+        pipeline_type       = "critique",
+        session_id          = session_id,
+        query               = f"Critique: {report.draft_filename}",
+        num_chunks          = len(report.claims),
+        papers_retrieved    = papers_cited,
+        latency_total       = elapsed,
+        prompt_tokens       = final_state.get("prompt_tokens", 0),
+        completion_tokens   = final_state.get("completion_tokens", 0),
+        total_tokens        = final_state.get("total_tokens", 0),
+        estimated_cost_usd  = final_state.get("estimated_cost_usd", 0.0),
+        tokens_estimated    = final_state.get("tokens_estimated", False),
     )
     log_run(record)
 

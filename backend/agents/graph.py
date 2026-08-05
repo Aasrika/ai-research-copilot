@@ -9,6 +9,7 @@ Upgrades:
 """
 
 from functools import partial
+from typing import Optional, Union
 import time
 
 from langgraph.graph import StateGraph, END
@@ -20,6 +21,7 @@ from agents.answering_agent import answering_node
 from agents.critic_agent import critic_node, route_after_critic
 
 from evaluation.logger import RunRecord, RunTimer, log_run
+from core.token_tracking import empty_totals
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +97,7 @@ def run_pipeline(
     query:        str,
     vector_store: FAISS,
     k:            int  = 5,
-    paper_filter: str  = None,
+    paper_filter: Optional[Union[str, list[str]]] = None,
     max_retries:  int  = 2,
     session_id:   str  = None,
 ) -> AgentState:
@@ -124,6 +126,8 @@ def run_pipeline(
 
         "retry_count":  0,
         "max_retries":  max_retries,
+
+        **empty_totals(),
     }
 
     print(f"\n{'='*60}")
@@ -169,6 +173,12 @@ def run_pipeline(
         num_chunks           = len(chunks),
         sections_retrieved   = sections,
         papers_retrieved     = papers,
+
+        prompt_tokens        = final_state.get("prompt_tokens", 0),
+        completion_tokens    = final_state.get("completion_tokens", 0),
+        total_tokens         = final_state.get("total_tokens", 0),
+        estimated_cost_usd   = final_state.get("estimated_cost_usd", 0.0),
+        tokens_estimated     = final_state.get("tokens_estimated", False),
     )
 
     # Add error if occurred

@@ -1,3 +1,4 @@
+from typing import Optional, Union
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from core.config import TOP_K, MMR_LAMBDA, SECTION_KEYWORDS
@@ -51,11 +52,17 @@ def retrieve(
     query:        str,
     vector_store: FAISS,
     k:            int  = TOP_K,
-    paper_filter: str  = None,  # restrict to a specific paper title
+    paper_filter: Optional[Union[str, list[str]]] = None,  # one paper, a list of papers, or None for all
     section_hint: bool = True,  # auto-detect section from query
 ) -> list[Document]:
     """
     Retrieve the top-k most relevant AND diverse chunks for a query.
+
+    paper_filter accepts a single paper title (exact match), a list of
+    paper titles (matches any of them), or None (no restriction) — the
+    installed langchain_community FAISS filter already handles both
+    cases natively (`doc.get(field) in condition` when condition is a
+    list, `==` otherwise), so no extra logic is needed here.
 
     ── TECHNIQUE 1: MMR (Maximal Marginal Relevance) ──────────────────────
     Problem with plain similarity search:

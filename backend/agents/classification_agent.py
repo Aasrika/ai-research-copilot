@@ -17,6 +17,7 @@ from groq import Groq
 from core.config import CRITIQUE_MODEL
 from core.retriever import format_context
 from agents.critique_state import CritiqueState
+from core.token_tracking import accumulate, read_totals
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
@@ -55,6 +56,7 @@ def classify_claims_node(state: CritiqueState) -> dict:
     claim_evidence = state.get("claim_evidence", {})
 
     alignments = []
+    token_totals = read_totals(state)
 
     for claim in claims:
         evidence_chunks = claim_evidence.get(claim["id"], [])
@@ -62,6 +64,7 @@ def classify_claims_node(state: CritiqueState) -> dict:
 
         prompt = CLASSIFICATION_PROMPT.format(claim_text=claim["text"], context=context)
 
+        response = None
         try:
             response = client.chat.completions.create(
                 model=CRITIQUE_MODEL,
@@ -72,6 +75,9 @@ def classify_claims_node(state: CritiqueState) -> dict:
         except Exception as e:
             print(f"❌ Groq API error during classification: {e}")
             raw_output = ""
+
+        if response is not None:
+            token_totals = accumulate(token_totals, response, CRITIQUE_MODEL, prompt, raw_output)
 
         parsed = _parse_classification(raw_output)
         verdict = parsed["verdict"]
@@ -120,7 +126,7 @@ def classify_claims_node(state: CritiqueState) -> dict:
 
     print(f"\n⚖️ Classified {len(alignments)} claims")
 
-    return {"claim_alignments": alignments}
+    return {"claim_alignments": alignments, **token_totals}
 
 
 def _parse_classification(raw: str) -> dict:

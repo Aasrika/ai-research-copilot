@@ -37,3 +37,11 @@ class CritiqueState(TypedDict):
     # ── Final assembled report ───────────────────────────────────────────────
     report: dict
     run_id: str
+
+    # ── Token/cost tracking (accumulated across the extraction call and
+    #    every per-claim classification call — see core/token_tracking.py) ──
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    tokens_estimated: bool

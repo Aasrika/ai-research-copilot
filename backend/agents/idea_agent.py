@@ -4,6 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from core.retriever import retrieve, format_context
 from core.config import IDEA_MODEL
+from core.token_tracking import extract_usage, estimate_cost
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +122,10 @@ def generate_research_ideas(vector_store: FAISS, paper_filter=None, focus_area="
     ideas["chunks_used"] = chunks
     ideas["paper_title"] = paper_filter
     ideas["focus_area"]  = focus_area
+
+    usage = extract_usage(response, prompt, raw or "")
+    ideas["token_usage"] = usage
+    ideas["estimated_cost_usd"] = estimate_cost(usage, IDEA_MODEL)
 
     return ideas
 

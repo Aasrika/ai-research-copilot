@@ -12,6 +12,7 @@ from groq import Groq
 from agents.state import AgentState
 from core.retriever import format_context
 from core.config import ANSWERING_MODEL, TEMPERATURE
+from core.token_tracking import accumulate, read_totals
 
 
 ANSWERING_PROMPT = """You are a rigorous scientific research assistant answering questions about research papers.
@@ -103,6 +104,9 @@ def answering_node(state: AgentState) -> dict:
             "coverage": "",
         }
 
+    # Only reached on a successful call, so `response` is always defined here.
+    token_totals = accumulate(read_totals(state), response, ANSWERING_MODEL, prompt, raw_output)
+
     reasoning, answer, coverage = _parse_response(raw_output)
 
     # 🚨 Hard fallback if parsing fails
@@ -112,6 +116,7 @@ def answering_node(state: AgentState) -> dict:
             "answer": raw_output.strip() or "Failed to generate answer.",
             "reasoning": "",
             "coverage": "",
+            **token_totals,
         }
 
     print(f"\n✍️ Answer generated ({len(answer)} chars)")
@@ -121,6 +126,7 @@ def answering_node(state: AgentState) -> dict:
     return {
         "answer": answer,
         "reasoning": reasoning,
+        **token_totals,
         "coverage": coverage,
     }
 
